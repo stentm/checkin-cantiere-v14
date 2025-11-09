@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Check-in Cantiere</title>
+<script src="https://unpkg.com/html5-qrcode"></script>
+<style>
+  body::before {
+    content:"";
+    position:fixed;
+    top:0; left:0;
+    width:100vw; height:100vh;
+    background-image:url("bg.jpg");
+    background-size:cover;
+    background-position:center;
+    opacity:0.25;
+    z-index:-1;
+    pointer-events:none;
+  }
+  body {
+    margin:0;
+    font-family: Arial, sans-serif;
+  }
+  .container {
+    background: rgba(255,255,255,0.4);
+    backdrop-filter: blur(4px);
+    max-width:600px;
+    margin:20px auto;
+    padding:20px;
+    border-radius:16px;
+  }
+  #reader {width:100%;max-width:350px;height:350px;margin:10px auto;background:#000;}
+  .hidden{display:none;}
+  label{font-weight:700;}
+  input{width:100%;padding:12px;margin:6px 0;font-size:18px;}
+  .btn{width:100%;padding:16px;font-size:18px;border:none;border-radius:8px;margin-top:12px;}
+  .scan{background:#007bff;color:#fff;}
+  .entry{background:#28a745;color:#fff;}
+  .exit{background:#dc3545;color:#fff;}
+  #success{color:#0a7a28;font-weight:700;}
+  #error{color:#b00020;font-weight:700;}
+  #langBox {display:flex;gap:10px;margin-bottom:10px;}
+  #langBox button{flex:1;padding:10px;border-radius:6px;border:none;font-size:16px;cursor:pointer;}
+  .sel{background:#007bff;color:#fff;}
+  .unsel{background:#eee;color:#333;}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div id="langBox">
+    <button id="btnIt">IT</button>
+    <button id="btnAr">عربي</button>
+  </div>
+
+  <h2 id="title">Registrazione Presenza</h2>
+
+  <div id="scanArea">
+    <button id="startScan" class="btn scan">Avvia scansione QR</button>
+    <div id="reader"></div>
+    <p id="scanMsg"></p>
+  </div>
+
+  <div id="formArea" class="hidden">
+    <label id="labCantiere">Cantiere</label>
+    <input id="cantiere" readonly/>
+
+    <label id="labNome">Nome e Cognome</label>
+    <input id="nome"/>
+
+    <label id="labAzienda">Azienda</label>
+    <input id="azienda"/>
+
+    <button id="btnEntrata" class="btn entry">Entrata</button>
+    <button id="btnUscita" class="btn exit">Uscita</button>
+    <button id="btnNew" class="btn scan">Nuova scansione QR</button>
+  </div>
+
+  <p id="success"></p>
+  <p id="error"></p>
+</div>
+
+<script>
+let html5QrCode,lastCantiere=null;
+const API_ENDPOINT="/api/save";
+let currentLang="it";
+
+const labels={
+  it:{
+    title:"Registrazione Presenza",
+    cantiere:"Cantiere",
+    nome:"Nome e Cognome",
+    azienda:"Azienda",
+    start:"Avvia scansione QR",
+    entrata:"Entrata",
+    uscita:"Uscita",
+    newScan:"Nuova scansione QR",
+    fill:"Compila Nome e Azienda",
+    okIn:"Entrata registrata ✅",
+    okOut:"Uscita registrata ✅",
+    errCam:"Errore fotocamera: "
+  },
+  ar:{
+    title:"تسجيل الحضور",
+    cantiere:"موقع العمل",
+    nome:"الاسم الكامل",
+    azienda:"الشركة",
+    start:"بدء مسح رمز QR",
+    entrata:"دخول",
+    uscita:"خروج",
+    newScan:"مسح رمز جديد",
+    fill:"املأ الاسم والشركة",
+    okIn:"✅ تم تسجيل الدخول",
+    okOut:"✅ تم تسجيل الخروج",
+    errCam:"خطأ في الكاميرا: "
+  }
+};
+
+const $=id=>document.getElementById(id);
+const show=id=>$(id).classList.remove('hidden');
+const hide=id=>$(id).classList.add('hidden');
+
+function applyLang(l){
+  currentLang=l;
+  const L=labels[l];
+  $("title").innerText=L.title;
+  $("labCantiere").innerText=L.cantiere;
+  $("labNome").innerText=L.nome;
+  $("labAzienda").innerText=L.azienda;
+  $("startScan").innerText=L.start;
+  $("btnEntrata").innerText=L.entrata;
+  $("btnUscita").innerText=L.uscita;
+  $("btnNew").innerText=L.newScan;
+
+  // Visual selection
+  $("btnIt").className=(l==="it")?"sel":"unsel";
+  $("btnAr").className=(l==="ar")?"sel":"unsel";
+
+  // Direction
+  document.documentElement.setAttribute("dir", l==="ar"?"rtl":"ltr");
+
+  // Save preference
+  localStorage.setItem("lang", l);
+}
+
+$("btnIt").onclick=()=>applyLang("it");
+$("btnAr").onclick=()=>applyLang("ar");
+
+// load stored lang
+const savedLang=localStorage.getItem("lang")||"it";
+applyLang(savedLang);
+
+function handleQr(text){
+  let c=text.trim().toUpperCase();
+  $("cantiere").value=c; lastCantiere=c;
+  hide("scanArea"); show("formArea");
+}
+
+async function startCameraScan(){
+  try{
+    html5QrCode=new Html5Qrcode("reader");
+    await html5QrCode.start(
+      {facingMode:"environment"},
+      {fps:10,qrbox:{width:320,height:320}},
+      decoded=>{html5QrCode.stop();handleQr(decoded);}
+    );
+  }catch(e){
+    $("error").innerText=labels[currentLang].errCam+e;
+  }
+}
+
+async function send(azione){
+  const nome=$("nome").value.trim();
+  const azienda=$("azienda").value.trim();
+  if(!nome||!azienda){
+    $("error").innerText=labels[currentLang].fill;
+    return;
+  }
+  const now=new Date();
+  const payload={
+    data:now.toLocaleDateString("it-IT"),
+    ora:now.toLocaleTimeString("it-IT"),
+    nome,azienda,cantiere:lastCantiere,azione
+  };
+
+  try{
+    const res=await fetch(API_ENDPOINT,{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(payload)
+    });
+    if(!res.ok)throw new Error(await res.text());
+    $("success").innerText=(azione==="ENTRATA")?labels[currentLang].okIn:labels[currentLang].okOut;
+    $("error").innerText="";
+  }catch(e){
+    $("error").innerText="Errore: "+e.message;
+  }
+}
+
+$("startScan").onclick=startCameraScan;
+$("btnEntrata").onclick=()=>send("ENTRATA");
+$("btnUscita").onclick=()=>send("USCITA");
+$("btnNew").onclick=()=>{
+  show("scanArea");
+  hide("formArea");
+  $("nome").value="";
+  $("azienda").value="";
+  $("success").innerText="";
+  $("error").innerText="";
+};
+</script>
+</body>
+</html>
